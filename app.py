@@ -6,6 +6,7 @@ import time
 import subprocess
 import requests
 import re
+import random
 from seleniumbase import SB
 
 # 从环境变量获取账号密码和 TG 配置
@@ -21,9 +22,9 @@ PASSWORD1    = os.environ.get("LUNES_PASSWORD1") or "" # 登录密码（账号2�
 # 🆕 新增：账号列表——只收集「邮箱+密码都齐全」的账号，main 里依次执行
 ACCOUNTS = []
 if EMAIL and PASSWORD:
-    ACCOUNTS.append({"name": "账号1", "email": EMAIL,  "password": PASSWORD,  "shot": "acc1"})
+    ACCOUNTS.append({"name": "账号1", "email": EMAIL,  "password": PASSWORD,  "shot": "acc1", "flag": "🇺🇸"})
 if EMAIL1 and PASSWORD1:
-    ACCOUNTS.append({"name": "账号2", "email": EMAIL1, "password": PASSWORD1, "shot": "acc2"})
+    ACCOUNTS.append({"name": "账号2", "email": EMAIL1, "password": PASSWORD1, "shot": "acc2", "flag": "🇩🇪"})
 
 LOGIN_URL = "https://betadash.lunes.host/login?next=/"
 
@@ -39,8 +40,8 @@ def mask_email(email: str) -> str:
         return email[:2] + '****'
 
 #  Telegram 推送
-# 🆕 修改：新增 email / name 两个入参（原函数读取全局 EMAIL），推送文案带账号标识
-def send_tg_message(status_icon, status_text, extra_text="", email="", name=""):
+# 🆕 修改：新增 email / name / flag 入参（原函数读取全局 EMAIL），推送文案带账号标识与国旗
+def send_tg_message(status_icon, status_text, extra_text="", email="", name="", flag="🇺🇸"):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         print("ℹ️ 未配置 TG_BOT_TOKEN 或 TG_CHAT_ID，跳过 Telegram 推送。")
         return
@@ -51,7 +52,7 @@ def send_tg_message(status_icon, status_text, extra_text="", email="", name=""):
     masked_email = mask_email(email)  # 🆕 修改：改为按传入账号各自掩码
 
     text = (
-        f"🇺🇸 Lunes 保活通知\n\n"
+        f"{flag} Lunes 保活通知\n\n"
         f"{status_icon} {status_text}\n"
         f"👤 登录账户: {name} {masked_email}\n"   # 🆕 修改：加上「账号N」标识，区分推送来源
         f"⏱️ 登录时间: {current_time_str}"
@@ -388,7 +389,7 @@ def run_account(sb_kwargs, acc) -> bool:
                 success, info = visit_server(sb)
                 if success:
                     extra = f"服务器: {info['server_name']}\nID: {info['server_id']}"
-                    send_tg_message("✅", "续期成功", extra, email=acc["email"], name=name)
+                    send_tg_message("✅", "续期成功", extra, email=acc["email"], name=name, flag=acc["flag"])
                     return True
                 else:
                     error_msg = info.get('error', '未知错误')
@@ -396,16 +397,16 @@ def run_account(sb_kwargs, acc) -> bool:
                     extra = f"错误: {error_msg}"
                     if 'server_id' in info:
                         extra += f"\n服务器ID: {info['server_id']}"
-                    send_tg_message("❌", "续期失败", extra, email=acc["email"], name=name)
+                    send_tg_message("❌", "续期失败", extra, email=acc["email"], name=name, flag=acc["flag"])
                     return False
             else:
                 print(f"\n❌ {name} 登录失败，终止该账号后续续期操作。")
-                send_tg_message("❌", "登录失败", "", email=acc["email"], name=name)
+                send_tg_message("❌", "登录失败", "", email=acc["email"], name=name, flag=acc["flag"])
                 return False
     except Exception as e:
         # 🆕 新增：浏览器启动失败等未预期异常兜底，推送后继续下一个账号
         print(f"❌ {name} 执行出现异常: {e}")
-        send_tg_message("❌", "执行异常", f"错误: {e}", email=acc["email"], name=name)
+        send_tg_message("❌", "执行异常", f"错误: {e}", email=acc["email"], name=name, flag=acc["flag"])
         return False
 
 def main():
@@ -429,10 +430,15 @@ def main():
 
     # 🆕 新增：逐账号执行（各自独立浏览器会话），末尾汇总结果
     results = []
-    for acc in ACCOUNTS:
+    for idx, acc in enumerate(ACCOUNTS):
         ok = run_account(sb_kwargs, acc)
         results.append((acc["name"], ok))
-        time.sleep(3)   # 账号间稍作间隔，等浏览器进程干净退出
+        if idx < len(ACCOUNTS) - 1:
+            # 🆕 修改：账号间由固定 3 秒改为随机 1~3 分钟，模拟真人操作间隔，降低黑号风险
+            #          （推送在 run_account 内已完成，此处等待后再执行下一账号）
+            wait_seconds = random.randint(60, 180)
+            print(f"\n⏳ 随机等待 {wait_seconds} 秒（约 {wait_seconds / 60:.1f} 分钟）后执行下一账号，避免多账号行为过于规律...")
+            time.sleep(wait_seconds)
 
     print("\n" + "=" * 40)
     print("📊 全部账号执行完毕：")
