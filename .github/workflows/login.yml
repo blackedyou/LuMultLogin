@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write           # time.txt 提交推送需要
-      actions: write            # gh run delete 清理记录需要
+      actions: write            # gh run delete 
     steps:
       - name: 📥 下载代码
         uses: actions/checkout@v6
