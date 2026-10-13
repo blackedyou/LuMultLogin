@@ -4,8 +4,8 @@ on:
   workflow_dispatch:            # 手动触发
   schedule:
     # ⚠️ cron 只认 UTC：北京时间 = UTC + 8
-    # 每周一 UTC 06:04 = 北京时间 14:04，每 7 天运行一次
-    - cron: '4 6 * * 1'
+    # 每天 UTC 00:00 触发一次，脚本内部判断是否已满 10 天 + 随机延迟，实现每 10 天随机时间运行
+    - cron: '0 0 * * *'
 
 jobs:
   Renew-lunes:
@@ -30,7 +30,39 @@ jobs:
           pip install seleniumbase aiohttp requests
           seleniumbase install chromedriver
 
+      - name: ⏱️ 检查是否已满 10 天 + 随机延迟
+        id: check
+        run: |
+          # 读取上次运行时间（time.txt 格式：YYYY-MM-DD HH:MM:SS，上海时区）
+          if [ -f time.txt ]; then
+            LAST=$(cat time.txt)
+            LAST_TS=$(date -d "$LAST" +%s 2>/dev/null || echo 0)
+          else
+            LAST_TS=0
+          fi
+
+          NOW_TS=$(date +%s)
+          DIFF_DAYS=$(( (NOW_TS - LAST_TS) / 86400 ))
+
+          echo "上次运行时间: ${LAST:-无记录}"
+          echo "距今天数: $DIFF_DAYS"
+
+          if [ "$DIFF_DAYS" -lt 10 ]; then
+            echo "未满 10 天，跳过本次运行"
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 已满 10 天，随机延迟 0~23 小时 + 0~59 分钟，实现当天随机时间
+          RANDOM_HOUR=$((RANDOM % 24))
+          RANDOM_MIN=$((RANDOM % 60))
+          SLEEP_SEC=$((RANDOM_HOUR * 3600 + RANDOM_MIN * 60))
+          echo "已满 10 天，随机延迟 ${RANDOM_HOUR}小时${RANDOM_MIN}分钟 (共 ${SLEEP_SEC} 秒)"
+          sleep $SLEEP_SEC
+          echo "should_run=true" >> $GITHUB_OUTPUT
+
       - name: 🌐 设置sing-box代理转发
+        if: steps.check.outputs.should_run == 'true'
         continue-on-error: true
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}   # 在 secret 里设置 NODE_LINK 代理启用代理
@@ -38,6 +70,7 @@ jobs:
           bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
       - name: 🚀 运行续期脚本
+        if: steps.check.outputs.should_run == 'true'
         env:
           LUNES_EMAIL: ${{ secrets.LUNES_EMAIL }}
           LUNES_PASSWORD: ${{ secrets.LUNES_PASSWORD }}
@@ -52,6 +85,7 @@ jobs:
       # 更新时间到 time.txt，避免仓库长期无活动导致 schedule 被自动停用
       # （60 天无活动自动禁用只针对 public 仓库；private 仓库无此限制）
       - name: 更新时间
+        if: steps.check.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
